@@ -19,9 +19,14 @@ package net.skinsrestorer.shared.listeners;
 
 import ch.jalu.configme.SettingsManager;
 import lombok.RequiredArgsConstructor;
+import net.skinsrestorer.api.PropertyUtils;
+import net.skinsrestorer.api.connections.MineSkinAPI;
+import net.skinsrestorer.api.connections.model.MineSkinResponse;
 import net.skinsrestorer.api.exception.DataRequestException;
+import net.skinsrestorer.api.exception.MineSkinException;
 import net.skinsrestorer.api.property.SkinProperty;
 import net.skinsrestorer.api.storage.PlayerStorage;
+import net.skinsrestorer.api.storage.SkinStorage;
 import net.skinsrestorer.shared.config.AdvancedConfig;
 import net.skinsrestorer.shared.config.LoginConfig;
 import net.skinsrestorer.shared.listeners.event.SRLoginProfileEvent;
@@ -38,6 +43,8 @@ public final class LoginProfileListenerAdapter<R> {
     private final PlayerStorage playerStorage;
     private final SRLogger logger;
     private final AdapterReference adapterReference;
+    private final MineSkinAPI mineSkinAPI;
+    private final SkinStorage skinStorage;
 
     public R handleLogin(SRLoginProfileEvent<R> event) {
         logger.debug("Handling login for %s (%s)".formatted(event.getPlayerName(), event.getPlayerUniqueId()));
@@ -47,7 +54,13 @@ public final class LoginProfileListenerAdapter<R> {
 
         return event.runAsync(() -> {
             try {
-                handleAsync(event).ifPresent(event::setResultProperty);
+                handleAsync(event).ifPresent(skinProperty -> {
+                    // Convert to Mojang texture if enabled (your enhancement)
+                    SkinProperty finalProperty = settings.getProperty(AdvancedConfig.CONVERT_TO_MOJANG_TEXTURES) 
+                        ? ensureMojangTexture(skinProperty) 
+                        : skinProperty;
+                    event.setResultProperty(finalProperty);
+                });
             } catch (DataRequestException e) {
                 logger.debug(e);
             }
@@ -66,5 +79,55 @@ public final class LoginProfileListenerAdapter<R> {
         }
 
         return playerStorage.getSkinForPlayer(event.getPlayerUniqueId(), event.getPlayerName(), event.hasOnlineProperties());
+    }
+
+    /**
+     * Enhancement: Converts non-Mojang skins to use textures.minecraft.net
+     * This ensures all skins are hosted by Mojang for consistency.
+     */
+    private SkinProperty ensureMojangTexture(SkinProperty originalProperty) {
+        try {
+            // Check if already using Mojang textures
+            String textureUrl = PropertyUtils.getSkinTextureUrl(originalProperty);
+            if (textureUrl.contains("textures.minecraft.net")) {
+                logger.debug("Skin already uses Mojang textures: " + textureUrl);
+                return originalProperty;
+            }
+
+            logger.debug("Converting non-Mojang skin to Mojang textures: " + textureUrl);
+
+            // Check cache first
+            String cacheKey = "mojang-converted-" + PropertyUtils.getSkinTextureHash(originalProperty);
+            try {
+                var cached = adapterReference.get().getCustomSkinData(cacheKey);
+                if (cached.isPresent()) {
+                    logger.debug("Using cached conversion for: " + textureUrl);
+                    return cached.get().getProperty();
+                }
+            } catch (StorageAdapter.StorageException e) {
+                logger.debug("Cache lookup failed: " + e.getMessage());
+            }
+
+            // Convert through MineSkin
+            MineSkinResponse response = mineSkinAPI.genSkin(textureUrl, null);
+            SkinProperty convertedProperty = response.getProperty();
+            
+            // Cache the conversion
+            try {
+                skinStorage.setCustomSkinData(cacheKey, convertedProperty);
+                logger.debug("Cached skin conversion: " + cacheKey);
+            } catch (Exception e) {
+                logger.warning("Failed to cache skin conversion: " + e.getMessage());
+            }
+            
+            logger.info("Successfully converted skin to Mojang textures: " + textureUrl + " -> " + 
+                       PropertyUtils.getSkinTextureUrl(convertedProperty));
+            
+            return convertedProperty;
+
+        } catch (DataRequestException | MineSkinException e) {
+            logger.warning("Failed to convert skin to Mojang textures, using original: " + e.getMessage());
+            return originalProperty; // Fallback to original
+        }
     }
 }

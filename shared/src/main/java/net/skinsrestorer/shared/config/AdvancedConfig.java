@@ -63,6 +63,13 @@ public class AdvancedConfig implements SettingsHolder {
             "This option will be on by default in the future when backwards compatibility is no longer a concern.",
     })
     public static final Property<Boolean> PLAYER_HEAD_CHAT_OBJECTS = newProperty("advanced.playerHeadChatObjects", false);
+    @Comment({
+            "Convert all non-Mojang skins to use textures.minecraft.net during login.",
+            "This ensures all skins are hosted by Mojang for consistency and compatibility.",
+            "Requires MineSkin API calls for conversion, results are cached to avoid repeated conversions.",
+            "Leave disabled (false) to keep the existing behavior unchanged."
+    })
+    public static final Property<Boolean> CONVERT_TO_MOJANG_TEXTURES = newProperty("advanced.convertToMojangTextures", false);
 
     @Comment({
             "API endpoint for UUID lookups via the Eclipse proxy.",
